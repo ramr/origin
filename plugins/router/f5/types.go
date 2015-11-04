@@ -77,6 +77,9 @@ type f5Pool struct {
 	// uses /Common/http.
 	Monitor string `json:"monitor"`
 
+	// Partition is the partition path for the pool.
+	Partition string `json:"partition"`
+
 	// Name is the name of the pool.  The F5 router uses names of the form
 	// openshift_<namespace>_<servicename>.
 	Name string `json:"name"`
@@ -105,6 +108,9 @@ type f5PoolMemberset struct {
 type f5Policy struct {
 	// Name is the name of the policy.
 	Name string `json:"name"`
+
+	// Partition is the partition path for the pool.
+	Partition string `json:"partition"`
 
 	// Controls is a list of F5 BIG-IP LTM features enabled for the pool.
 	// Typically we use just forwarding; other possible values are caching,

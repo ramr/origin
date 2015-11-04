@@ -457,6 +457,23 @@ func (f5 *f5LTM) delete(url string, result interface{}) error {
 }
 
 //
+// iControl REST resource helper methods.
+//
+
+// getFullyQualifiedResourcePath returns the fully qualified path to a
+// resource.
+func (f5 *f5LTM) getFullyQualifiedResourcePath(resourceName string) string {
+	return path.Join(f5.partitionPath, resourceName)
+}
+
+// getEscapedIControlURIPath returns a fully qualified `escaped` resource
+// path that can be used in the iControl REST URI calls.
+func (f5 *f5LTM) getEscapedIControlURIPath(resourceName string) string {
+	resourcePath := f5.getFullyQualifiedResourcePath(resourceName)
+	return strings.Replace(resourcePath, "/", "~", -1)
+}
+
+//
 // Routines for controlling F5.
 //
 
@@ -465,8 +482,9 @@ func (f5 *f5LTM) delete(url string, result interface{}) error {
 func (f5 *f5LTM) ensurePolicyExists(policyName string) error {
 	glog.V(4).Infof("Checking whether policy %s exists...", policyName)
 
+	policyURIPath := f5.getEscapedIControlURIPath(policyName)
 	policyUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s",
-		f5.host, policyName)
+		f5.host, policyURIPath)
 
 	err := f5.get(policyUrl, nil)
 	if err != nil && err.(F5Error).httpStatusCode != 404 {
@@ -484,10 +502,11 @@ func (f5 *f5LTM) ensurePolicyExists(policyName string) error {
 	policiesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy", f5.host)
 
 	policyPayload := f5Policy{
-		Name:     policyName,
-		Controls: []string{"forwarding"},
-		Requires: []string{"http"},
-		Strategy: "best-match",
+		Name:      policyName,
+		Partition: f5.partitionPath,
+		Controls:  []string{"forwarding"},
+		Requires:  []string{"http"},
+		Strategy:  "best-match",
 	}
 
 	err = f5.post(policiesUrl, policyPayload, nil)
@@ -501,7 +520,7 @@ func (f5 *f5LTM) ensurePolicyExists(policyName string) error {
 	glog.V(4).Infof("Policy %s created.  Adding no-op rule...", policyName)
 
 	rulesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules",
-		f5.host, policyName)
+		f5.host, policyURIPath)
 
 	rulesPayload := f5Rule{
 		Name: "default_noop",
@@ -840,9 +859,10 @@ func (f5 *f5LTM) CreatePool(poolname string) error {
 	// From @Miciah: In the future, we should allow the administrator
 	// to specify a different monitor to use.
 	payload := f5Pool{
-		Mode:    "round-robin",
-		Monitor: "/Common/http",
-		Name:    poolname,
+		Mode:      "round-robin",
+		Monitor:   "/Common/http",
+		Partition: f5.partitionPath,
+		Name:      poolname,
 	}
 
 	err := f5.post(url, payload, nil)
@@ -864,7 +884,8 @@ func (f5 *f5LTM) CreatePool(poolname string) error {
 // DeletePool deletes the specified pool from F5 BIG-IP, and deletes
 // f5.poolMembers[poolname].
 func (f5 *f5LTM) DeletePool(poolname string) error {
-	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s", f5.host, poolname)
+	poolURIPath := f5.getEscapedIControlURIPath(poolname)
+	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s", f5.host, poolURIPath)
 
 	err := f5.delete(url, nil)
 	if err != nil {
@@ -889,8 +910,9 @@ func (f5 *f5LTM) GetPoolMembers(poolname string) (map[string]bool, error) {
 		return members, nil
 	}
 
+	poolURIPath := f5.getEscapedIControlURIPath(poolname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s/members",
-		f5.host, poolname)
+		f5.host, poolURIPath)
 
 	res := f5PoolMemberset{}
 
@@ -952,8 +974,9 @@ func (f5 *f5LTM) AddPoolMember(poolname, member string) error {
 
 	glog.V(4).Infof("Adding pool member %s to pool %s.", member, poolname)
 
+	poolURIPath := f5.getEscapedIControlURIPath(poolname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s/members",
-		f5.host, poolname)
+		f5.host, poolURIPath)
 
 	payload := f5PoolMember{
 		Name: member,
@@ -991,8 +1014,9 @@ func (f5 *f5LTM) DeletePoolMember(poolname, member string) error {
 		return nil
 	}
 
+	poolURIPath := f5.getEscapedIControlURIPath(poolname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s/members/%s",
-		f5.host, poolname, member)
+		f5.host, poolURIPath, member)
 
 	err = f5.delete(url, nil)
 	if err != nil {
@@ -1014,8 +1038,9 @@ func (f5 *f5LTM) getRoutes(policyname string) (map[string]bool, error) {
 		return routes, nil
 	}
 
+	policyURIPath := f5.getEscapedIControlURIPath(policyname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules",
-		f5.host, policyname)
+		f5.host, policyURIPath)
 
 	res := f5PolicyRuleset{}
 
@@ -1085,8 +1110,9 @@ func (f5 *f5LTM) addRoute(policyname, routename, poolname, hostname,
 	pathname string) error {
 	success := false
 
+	policyURIPath := f5.getEscapedIControlURIPath(policyname)
 	rulesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules",
-		f5.host, policyname)
+		f5.host, policyURIPath)
 
 	rulesPayload := f5Rule{
 		Name: routename,
@@ -1116,7 +1142,7 @@ func (f5 *f5LTM) addRoute(policyname, routename, poolname, hostname,
 	}()
 
 	conditionUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules/%s/conditions",
-		f5.host, policyname, routename)
+		f5.host, policyURIPath, routename)
 
 	conditionPayload := f5RuleCondition{
 		Name:            "0",
@@ -1155,7 +1181,7 @@ func (f5 *f5LTM) addRoute(policyname, routename, poolname, hostname,
 	}
 
 	actionUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules/%s/actions",
-		f5.host, policyname, routename)
+		f5.host, policyURIPath, routename)
 
 	actionPayload := f5RuleAction{
 		Name:    "0",
@@ -1347,8 +1373,9 @@ func (f5 *f5LTM) DeletePassthroughRoute(routename string) error {
 // deleteRoute deletes the F5 policy rule for the given routename from the given
 // policy.
 func (f5 *f5LTM) deleteRoute(policyname, routename string) error {
+	policyURIPath := f5.getEscapedIControlURIPath(policyname)
 	ruleUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules/%s",
-		f5.host, policyname, routename)
+		f5.host, policyURIPath, routename)
 
 	err := f5.delete(ruleUrl, nil)
 	if err != nil {
