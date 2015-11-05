@@ -696,7 +696,7 @@ func (f5 *f5LTM) ensureVserverHasIRule(vserverName, iRuleName string) error {
 		return err
 	}
 
-	commonIRuleName := path.join("/", f5.partitionPath, iRuleName)
+	commonIRuleName := path.Join("/", f5.partitionPath, iRuleName)
 
 	for _, name := range res.Rules {
 		if name == commonIRuleName {
