@@ -41,7 +41,9 @@ type F5Error struct {
 // The F5 router uses it within f5Vserver to unmarshal the JSON response when
 // requesting a vserver from F5 BIG-IP.
 type f5VserverPolicy struct {
-	Name string `json:"name"`
+	Name      string `json:"name"`
+	Partition string `json:"partition"`
+	FullPath  string `json:"fullPath"`
 }
 
 // f5VserverPolicies represents the policies associated with an F5 BIG-IP LTM
@@ -239,6 +241,9 @@ type f5Datagroup struct {
 type f5IRule struct {
 	// Name is the name of the iRule.
 	Name string `json:"name"`
+
+	// Partition is the partition path for the iRule.
+	Partition string `json:"partition"`
 
 	// Code is the TCL code of the iRule.
 	Code string `json:"apiAnonymous"`

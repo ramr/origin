@@ -460,17 +460,31 @@ func (f5 *f5LTM) delete(url string, result interface{}) error {
 // iControl REST resource helper methods.
 //
 
-// getFullyQualifiedResourcePath returns the fully qualified path to a
-// resource.
-func (f5 *f5LTM) getFullyQualifiedResourcePath(resourceName string) string {
-	return path.Join(f5.partitionPath, resourceName)
+// getEscapediControlResourceUriPath returns a fully qualified `escaped`
+// resource path that can be used in the iControl REST URI calls.
+func (f5 *f5LTM) getEscapediControlResourceUriPath(resourceName string) string {
+	resourcePath := path.Join(f5.partitionPath, resourceName)
+	return getEscapedIControlURIPath(resourcePath)
 }
 
-// getEscapedIControlURIPath returns a fully qualified `escaped` resource
-// path that can be used in the iControl REST URI calls.
-func (f5 *f5LTM) getEscapedIControlURIPath(resourceName string) string {
-	resourcePath := f5.getFullyQualifiedResourcePath(resourceName)
-	return strings.Replace(resourcePath, "/", "~", -1)
+// getEscapediControlVserverUriPath returns the qualified `escaped` F5
+// Virtual Server path that can be used in the iControl REST URI calls.
+func (f5 *f5LTM) getEscapediControlVserverUriPath(vserverName string) string {
+	qualifiedVServerName := vserverName
+	pathComponents := strings.Split(f5.partitionPath, "/")
+	if len(pathComponents) > 1 && len(pathComponents[1]) > 0 {
+		// Build the qualified Virtual Server name.
+		// Note: Although the configuration is stored inside a
+		//       partition path, the F5 virtual server belongs to
+		//       the partition's top-level folder.
+		// Example for a vserver call foo-server, this would be
+		//    /Common/foo-server for the default /Common path and
+		//    /ose/foo-server for a custom /ose/v3/config path.
+		qualifiedVServerName = fmt.Sprintf("/%s/%s",
+			pathComponents[1], vserverName)
+	}
+
+	return getEscapedIControlURIPath(qualifiedVServerName)
 }
 
 //
@@ -482,9 +496,9 @@ func (f5 *f5LTM) getEscapedIControlURIPath(resourceName string) string {
 func (f5 *f5LTM) ensurePolicyExists(policyName string) error {
 	glog.V(4).Infof("Checking whether policy %s exists...", policyName)
 
-	policyURIPath := f5.getEscapedIControlURIPath(policyName)
+	escapedPolicyUriPath := f5.getEscapediControlResourceUriPath(policyName)
 	policyUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s",
-		f5.host, policyURIPath)
+		f5.host, escapedPolicyUriPath)
 
 	err := f5.get(policyUrl, nil)
 	if err != nil && err.(F5Error).httpStatusCode != 404 {
@@ -520,7 +534,7 @@ func (f5 *f5LTM) ensurePolicyExists(policyName string) error {
 	glog.V(4).Infof("Policy %s created.  Adding no-op rule...", policyName)
 
 	rulesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules",
-		f5.host, policyURIPath)
+		f5.host, escapedPolicyUriPath)
 
 	rulesPayload := f5Rule{
 		Name: "default_noop",
@@ -542,11 +556,13 @@ func (f5 *f5LTM) ensureVserverHasPolicy(vserverName, policyName string) error {
 	glog.V(4).Infof("Checking whether vserver %s has policy %s...",
 		vserverName, policyName)
 
+	uriEscapedName := f5.getEscapediControlVserverUriPath(vserverName)
+
 	// We could use fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s/policies/%s",
-	// f5.host, vserverName, policyName) here, except that F5 iControl REST
+	// f5.host, uriEscapedName, policyName) here, except that F5 iControl REST
 	// returns a 200 even if the policy does not exist.
 	vserverPoliciesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s/policies",
-		f5.host, vserverName)
+		f5.host, uriEscapedName)
 
 	res := f5VserverPolicies{}
 
@@ -555,8 +571,10 @@ func (f5 *f5LTM) ensureVserverHasPolicy(vserverName, policyName string) error {
 		return err
 	}
 
+	fullPolicyPath := path.Join(f5.partitionPath, policyName)
+
 	for _, policy := range res.Policies {
-		if policy.Name == policyName {
+		if policy.Name == policyName &&  policy.FullPath == fullPolicyPath {
 			glog.V(4).Infof("Vserver %s has policy %s associated with it;"+
 				" nothing to do.", vserverName, policyName)
 			return nil
@@ -566,7 +584,8 @@ func (f5 *f5LTM) ensureVserverHasPolicy(vserverName, policyName string) error {
 	glog.V(4).Infof("Adding policy %s to vserver %s...", policyName, vserverName)
 
 	vserverPoliciesPayload := f5VserverPolicy{
-		Name: policyName,
+		Name:      policyName,
+		Partition: f5.partitionPath,
 	}
 
 	err = f5.post(vserverPoliciesUrl, vserverPoliciesPayload, nil)
@@ -627,7 +646,8 @@ func (f5 *f5LTM) ensureDatagroupExists(datagroupName string) error {
 func (f5 *f5LTM) ensureIRuleExists(iRuleName, iRule string) error {
 	glog.V(4).Infof("Checking whether iRule %s exists...", iRuleName)
 
-	iRuleUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/rule/%s", f5.host, iRuleName)
+	iRuleUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/rule/%s", f5.host,
+		f5.getEscapediControlResourceUriPath(iRuleName))
 
 	err := f5.get(iRuleUrl, nil)
 	if err != nil && err.(F5Error).httpStatusCode != 404 {
@@ -645,8 +665,9 @@ func (f5 *f5LTM) ensureIRuleExists(iRuleName, iRule string) error {
 	iRulesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/rule", f5.host)
 
 	iRulePayload := f5IRule{
-		Name: iRuleName,
-		Code: iRule,
+		Name:      iRuleName,
+		Partition: f5.partitionPath,
+		Code:      iRule,
 	}
 
 	err = f5.post(iRulesUrl, iRulePayload, nil)
@@ -666,7 +687,7 @@ func (f5 *f5LTM) ensureVserverHasIRule(vserverName, iRuleName string) error {
 		vserverName, iRuleName)
 
 	vserverUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s",
-		f5.host, vserverName)
+		f5.host, f5.getEscapediControlVserverUriPath(vserverName))
 
 	res := f5VserverIRules{}
 
@@ -675,7 +696,7 @@ func (f5 *f5LTM) ensureVserverHasIRule(vserverName, iRuleName string) error {
 		return err
 	}
 
-	commonIRuleName := fmt.Sprintf("%s/%s", f5.partitionPath, iRuleName)
+	commonIRuleName := path.join("/", f5.partitionPath, iRuleName)
 
 	for _, name := range res.Rules {
 		if name == commonIRuleName {
@@ -688,8 +709,9 @@ func (f5 *f5LTM) ensureVserverHasIRule(vserverName, iRuleName string) error {
 
 	glog.V(4).Infof("Adding iRule %s to vserver %s...", iRuleName, vserverName)
 
+	fqSslPassthroughIRuleName := path.Join(f5.partitionPath, sslPassthroughIRuleName)
 	vserverRulesPayload := f5VserverIRules{
-		Rules: []string{sslPassthroughIRuleName},
+		Rules: []string{fqSslPassthroughIRuleName},
 	}
 
 	err = f5.patch(vserverUrl, vserverRulesPayload, nil)
@@ -709,7 +731,7 @@ func (f5 *f5LTM) checkPartitionPathExists(pathName string) (bool, error) {
 	// F5 iControl REST API expects / characters in the path to be
 	// escaped as ~.
 	uri := fmt.Sprintf("https://%s/mgmt/tm/sys/folder/%s",
-		f5.host, strings.Replace(pathName, "/", "~", -1))
+		f5.host, getEscapedIControlURIPath(pathName))
 
 	err := f5.get(uri, nil)
 	if err != nil {
@@ -884,8 +906,8 @@ func (f5 *f5LTM) CreatePool(poolname string) error {
 // DeletePool deletes the specified pool from F5 BIG-IP, and deletes
 // f5.poolMembers[poolname].
 func (f5 *f5LTM) DeletePool(poolname string) error {
-	poolURIPath := f5.getEscapedIControlURIPath(poolname)
-	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s", f5.host, poolURIPath)
+	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s", f5.host,
+		f5.getEscapediControlResourceUriPath(poolname))
 
 	err := f5.delete(url, nil)
 	if err != nil {
@@ -910,9 +932,8 @@ func (f5 *f5LTM) GetPoolMembers(poolname string) (map[string]bool, error) {
 		return members, nil
 	}
 
-	poolURIPath := f5.getEscapedIControlURIPath(poolname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s/members",
-		f5.host, poolURIPath)
+		f5.host, f5.getEscapediControlResourceUriPath(poolname))
 
 	res := f5PoolMemberset{}
 
@@ -974,9 +995,8 @@ func (f5 *f5LTM) AddPoolMember(poolname, member string) error {
 
 	glog.V(4).Infof("Adding pool member %s to pool %s.", member, poolname)
 
-	poolURIPath := f5.getEscapedIControlURIPath(poolname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s/members",
-		f5.host, poolURIPath)
+		f5.host, f5.getEscapediControlResourceUriPath(poolname))
 
 	payload := f5PoolMember{
 		Name: member,
@@ -1014,9 +1034,8 @@ func (f5 *f5LTM) DeletePoolMember(poolname, member string) error {
 		return nil
 	}
 
-	poolURIPath := f5.getEscapedIControlURIPath(poolname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/pool/%s/members/%s",
-		f5.host, poolURIPath, member)
+		f5.host, f5.getEscapediControlResourceUriPath(poolname), member)
 
 	err = f5.delete(url, nil)
 	if err != nil {
@@ -1038,9 +1057,8 @@ func (f5 *f5LTM) getRoutes(policyname string) (map[string]bool, error) {
 		return routes, nil
 	}
 
-	policyURIPath := f5.getEscapedIControlURIPath(policyname)
 	url := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules",
-		f5.host, policyURIPath)
+		f5.host, f5.getEscapediControlResourceUriPath(policyname))
 
 	res := f5PolicyRuleset{}
 
@@ -1110,9 +1128,9 @@ func (f5 *f5LTM) addRoute(policyname, routename, poolname, hostname,
 	pathname string) error {
 	success := false
 
-	policyURIPath := f5.getEscapedIControlURIPath(policyname)
+	escapedPolicyUriPath := f5.getEscapediControlResourceUriPath(policyname)
 	rulesUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules",
-		f5.host, policyURIPath)
+		f5.host, escapedPolicyUriPath)
 
 	rulesPayload := f5Rule{
 		Name: routename,
@@ -1142,7 +1160,7 @@ func (f5 *f5LTM) addRoute(policyname, routename, poolname, hostname,
 	}()
 
 	conditionUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules/%s/conditions",
-		f5.host, policyURIPath, routename)
+		f5.host, escapedPolicyUriPath, routename)
 
 	conditionPayload := f5RuleCondition{
 		Name:            "0",
@@ -1181,7 +1199,7 @@ func (f5 *f5LTM) addRoute(policyname, routename, poolname, hostname,
 	}
 
 	actionUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules/%s/actions",
-		f5.host, policyURIPath, routename)
+		f5.host, escapedPolicyUriPath, routename)
 
 	actionPayload := f5RuleAction{
 		Name:    "0",
@@ -1373,9 +1391,9 @@ func (f5 *f5LTM) DeletePassthroughRoute(routename string) error {
 // deleteRoute deletes the F5 policy rule for the given routename from the given
 // policy.
 func (f5 *f5LTM) deleteRoute(policyname, routename string) error {
-	policyURIPath := f5.getEscapedIControlURIPath(policyname)
 	ruleUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/policy/%s/rules/%s",
-		f5.host, policyURIPath, routename)
+		f5.host, f5.getEscapediControlResourceUriPath(policyname),
+		routename)
 
 	err := f5.delete(ruleUrl, nil)
 	if err != nil {
@@ -1691,12 +1709,12 @@ func (f5 *f5LTM) createServerSslProfile(profilename,
 // associateClientSslProfileWithVserver associates the specified client-ssl
 // profile with the specified vserver in F5 BIG-IP.
 func (f5 *f5LTM) associateClientSslProfileWithVserver(profilename,
-	vservername string) error {
+	vserverName string) error {
 	glog.V(4).Infof("Associating client-ssl profile %s with vserver %s...",
-		profilename, vservername)
+		profilename, vserverName)
 
 	vserverProfileUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s/profiles",
-		f5.host, vservername)
+		f5.host, f5.getEscapediControlVserverUriPath(vserverName))
 
 	vserverProfilePayload := f5VserverProfilePayload{
 		Name:    profilename,
@@ -1709,12 +1727,12 @@ func (f5 *f5LTM) associateClientSslProfileWithVserver(profilename,
 // associateServerSslProfileWithVserver associates the specified server-ssl
 // profile with the specified vserver in F5 BIG-IP.
 func (f5 *f5LTM) associateServerSslProfileWithVserver(profilename,
-	vservername string) error {
+	vserverName string) error {
 	glog.V(4).Infof("Associating server-ssl profile %s with vserver %s...",
-		profilename, vservername)
+		profilename, vserverName)
 
 	vserverProfileUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s/profiles",
-		f5.host, vservername)
+		f5.host, f5.getEscapediControlVserverUriPath(vserverName))
 
 	vserverProfilePayload := f5VserverProfilePayload{
 		Name:    profilename,
@@ -1742,7 +1760,7 @@ func (f5 *f5LTM) deleteCertParts(routename string,
 			routename, f5.httpsVserver)
 		serverSslProfileName := fmt.Sprintf("%s-server-ssl-profile", routename)
 		serverSslVserverProfileUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s/profiles/%s",
-			f5.host, f5.httpsVserver, serverSslProfileName)
+			f5.host, f5.getEscapediControlVserverUriPath(f5.httpsVserver), serverSslProfileName)
 		err := f5.delete(serverSslVserverProfileUrl, nil)
 		if err != nil {
 			// Iff the profile is not associated with the vserver, we can continue on to
@@ -1777,7 +1795,7 @@ func (f5 *f5LTM) deleteCertParts(routename string,
 			" from vserver %s...", routename, f5.httpsVserver)
 		clientSslProfileName := fmt.Sprintf("%s-client-ssl-profile", routename)
 		clientSslVserverProfileUrl := fmt.Sprintf("https://%s/mgmt/tm/ltm/virtual/%s/profiles/%s",
-			f5.host, f5.httpsVserver, clientSslProfileName)
+			f5.host, f5.getEscapediControlVserverUriPath(f5.httpsVserver), clientSslProfileName)
 		err := f5.delete(clientSslVserverProfileUrl, nil)
 		if err != nil {
 			// Iff the profile is not associated with the vserver, we can continue on
@@ -1847,4 +1865,10 @@ func (f5 *f5LTM) deleteCertParts(routename string,
 	}
 
 	return nil
+}
+
+// getEscapedIControlURIPath returns a fully qualified `escaped` path that
+// can be used in the iControl REST URI calls.
+func getEscapedIControlURIPath(pathName string) string {
+	return strings.Replace(pathName, "/", "~", -1)
 }
