@@ -1,0 +1,16 @@
+kind: ClusterIngress
+apiVersion: ingress.openshift.io/v1alpha1
+metadata:
+  name: checker
+  namespace: openshift-ingress-operator
+  finalizers:
+  - ingress.openshift.io/default-cluster-ingress
+spec:
+  nodePlacement:
+    nodeSelector:
+      matchLabels:
+        "node-role.kubernetes.io/worker": ""
+  defaultCertificateSecret: null
+  highAvailability:
+    # set to non cloud so that we don't create another external load balancer.
+    type: None

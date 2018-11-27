@@ -401,6 +401,7 @@ var (
 		// TODO: this will be removed once 4.0 passes all conformance tests
 		"[Suite:openshift/smoke-4]": {
 			`Managed cluster should start all core operators`,
+			`Ingress operator should`,
 
 			regexp.QuoteMeta("[sig-storage] Subpath [Volume type"),
 			regexp.QuoteMeta("[sig-storage] Volume Placement"),
